@@ -1,0 +1,139 @@
+%% Sandra Essam
+%% Actual patameters
+clear all
+clc
+EbNo_range=0:3:30;
+N_OFDMsymbols=1;
+N_ITERATION=1:1e4;
+ModulationOrder=64;
+N_subcarriers=512;
+N_Datasubcarriers=300;
+SamplingRate=7.68e6;
+Max_DelaySpread=3e-6;
+CP_length=4.7e-6;
+BER=[];
+N_Bits=N_Datasubcarriers*log2(ModulationOrder)*N_OFDMsymbols;
+No_Paths=round(SamplingRate*Max_DelaySpread);
+ERROR=0;
+% Ebno=100;
+for Ebno=EbNo_range
+ERROR=0;    
+for n=N_ITERATION
+Eb=((ModulationOrder-1)*4)/(6*log2(ModulationOrder)*N_subcarriers);
+No=Eb/db2pow(Ebno);
+%% Transmitter
+%%Generate Bits
+Bits=randi([0 1],N_Bits,1);
+%%Generate Symbols
+Symbols=qammod(Bits,ModulationOrder,'InputType','bit');
+%%Serial TO parralel
+ParralelSymbol=reshape(Symbols,N_Datasubcarriers,N_OFDMsymbols);
+%%Guard
+GuardSide=zeros((N_subcarriers-N_Datasubcarriers)/2,N_OFDMsymbols);
+SIG=[GuardSide;ParralelSymbol;GuardSide];
+%%IFFT
+sig=ifft(SIG);
+%%CyclicPrefix
+CP_samples=round(SamplingRate*CP_length);
+sig_with_cp=[sig(N_subcarriers-CP_samples+1:N_subcarriers,:);sig];
+%%serialization
+sig_with_cp=reshape(sig_with_cp,1,size(sig_with_cp,1)*size(sig_with_cp,2));
+%% Channel
+h=sqrt(1/(2*No_Paths))*(randn(1,No_Paths)+1i.*randn(1,No_Paths));
+sig_with_channel=[conv(sig_with_cp,h)];
+%%AWGN
+AWGN=(sqrt(No/2))*(randn(size(sig_with_channel))+1i*randn(size(sig_with_channel)));
+sig_with_noise=sig_with_channel+AWGN;
+%% RECIEVER
+signal=sig_with_noise(1:length(sig_with_cp));
+Recieved_sig=reshape(signal,N_subcarriers+CP_samples,N_OFDMsymbols);
+%%Remove CP
+Recieved_sig(1:CP_samples,:)=[];
+%%FFT
+Recieved_SIG=fft(Recieved_sig);
+%%Equalization
+H=fft(transpose(h),N_subcarriers);
+Estimated_SIG=Recieved_SIG./H;
+%%Remove Guards
+Recieved=Estimated_SIG(((N_subcarriers-N_Datasubcarriers)/2)+1:N_subcarriers-((N_subcarriers-N_Datasubcarriers)/2),:);
+%%parrallel to series
+Recieved_series=reshape(Recieved,N_Datasubcarriers*N_OFDMsymbols,1);
+%%Demodulation
+Recovered_Bits=qamdemod(Recieved_series,ModulationOrder,'Output','bit');
+%%DeMapper
+ERROR=ERROR+(sum(Bits~=Recovered_Bits)./(N_Bits));
+ end%% Sandra Essam
+%% Actual patameters
+clear all
+clc
+EbNo_range=0:3:30;
+N_OFDMsymbols=1;
+N_ITERATION=1:1e4;
+ModulationOrder=64;
+N_subcarriers=512;
+N_Datasubcarriers=300;
+SamplingRate=7.68e6;
+Max_DelaySpread=3e-6;
+CP_length=4.7e-6;
+BER=[];
+N_Bits=N_Datasubcarriers*log2(ModulationOrder)*N_OFDMsymbols;
+No_Paths=round(SamplingRate*Max_DelaySpread);
+ERROR=0;
+% Ebno=100;
+for Ebno=EbNo_range
+ERROR=0;    
+for n=N_ITERATION
+Eb=((ModulationOrder-1)*4)/(6*log2(ModulationOrder)*N_subcarriers);
+No=Eb/db2pow(Ebno);
+%% Transmitter
+%%Generate Bits
+Bits=randi([0 1],N_Bits,1);
+%%Generate Symbols
+Symbols=qammod(Bits,ModulationOrder,'InputType','bit');
+%%Serial TO parralel
+ParralelSymbol=reshape(Symbols,N_Datasubcarriers,N_OFDMsymbols);
+%%Guard
+GuardSide=zeros((N_subcarriers-N_Datasubcarriers)/2,N_OFDMsymbols);
+SIG=[GuardSide;ParralelSymbol;GuardSide];
+%%IFFT
+sig=ifft(SIG);
+%%CyclicPrefix
+CP_samples=round(SamplingRate*CP_length);
+sig_with_cp=[sig(N_subcarriers-CP_samples+1:N_subcarriers,:);sig];
+%%serialization
+sig_with_cp=reshape(sig_with_cp,1,size(sig_with_cp,1)*size(sig_with_cp,2));
+%% Channel
+h=sqrt(1/(2*No_Paths))*(randn(1,No_Paths)+1i.*randn(1,No_Paths));
+sig_with_channel=[conv(sig_with_cp,h)];
+%%AWGN
+AWGN=(sqrt(No/2))*(randn(size(sig_with_channel))+1i*randn(size(sig_with_channel)));
+sig_with_noise=sig_with_channel+AWGN;
+%% RECIEVER
+signal=sig_with_noise(1:length(sig_with_cp));
+Recieved_sig=reshape(signal,N_subcarriers+CP_samples,N_OFDMsymbols);
+%%Remove CP
+Recieved_sig(1:CP_samples,:)=[];
+%%FFT
+Recieved_SIG=fft(Recieved_sig);
+%%Equalization
+H=fft(transpose(h),N_subcarriers);
+Estimated_SIG=Recieved_SIG./H;
+%%Remove Guards
+Recieved=Estimated_SIG(((N_subcarriers-N_Datasubcarriers)/2)+1:N_subcarriers-((N_subcarriers-N_Datasubcarriers)/2),:);
+%%parrallel to series
+Recieved_series=reshape(Recieved,N_Datasubcarriers*N_OFDMsymbols,1);
+%%Demodulation
+Recovered_Bits=qamdemod(Recieved_series,ModulationOrder,'Output','bit');
+%%DeMapper
+ERROR=ERROR+(sum(Bits~=Recovered_Bits)./(N_Bits));
+ end
+ber=ERROR./(length(N_ITERATION));
+BER=[BER ber]
+end
+hold on
+semilogy(EbNo_range,BER,'-*r')
+ber=ERROR./(length(N_ITERATION));
+BER=[BER ber]
+end
+hold on
+semilogy(EbNo_range,BER,'-*r')

@@ -1,0 +1,140 @@
+%%Sandra Essam
+clear all 
+clc
+%% configure EnodeB settings
+EbNo_range=0:3:30;
+N_ITERATION=1:1e4;
+enb.NDLRB = 6;                % No of Downlink Resource Blocks(DL-RB)
+enb.CyclicPrefix = 'Normal';  % CP length
+enb.PHICHDuration = 'Normal'; % Normal PHICH duration
+enb.DuplexMode = 'FDD';       % FDD duplex mode
+enb.CFI = 3;                  % 4 PDCCH symbols
+enb.Ng = 'Sixth';             % HICH groups
+enb.CellRefP = 1;             % 1-antenna ports
+enb.NCellID = 10;             % Cell id
+enb.NSubframe = 0;            % Subframe number 0   
+ModulationOrder=4;
+%% Generate Resource Block
+subframe = lteDLResourceGrid(enb);
+BER=[];
+for Ebno=EbNo_range
+ber=0;
+for n=N_ITERATION
+Eb=((ModulationOrder-1)*4)/(6*log2(ModulationOrder)*enb.NDLRB.*12);
+No=Eb/db2pow(Ebno);
+%% configure DL-SCH & PDSCH
+pdsch.NLayers = 1;                       % No of layers
+pdsch.TxScheme = 'Port0';          % Transmission scheme
+pdsch.Modulation = 'QPSK';               % Modulation scheme
+pdsch.RNTI = 1;                          % 16-bit UE-specific mask
+pdsch.RV = 0;                            % Redundancy Version
+%% PDSCH Mapping Indices 
+pdsch.PRBSet = (0:enb.NDLRB-1).';   % Subframe resource allocation
+[pdschIndices,pdschInfo] = ...
+    ltePDSCHIndices(enb, pdsch, pdsch.PRBSet, {'1based'});
+%% DL-SCH Channel Coding
+codedTrBlkSize = pdschInfo.G;   % Available PDSCH bits
+
+transportBlkSize = 152;                % Transport block size
+dlschTransportBlk = randi([0 1], transportBlkSize, 1);
+
+% Perform Channel Coding
+codedTrBlock = lteDLSCH(enb, pdsch, codedTrBlkSize, ...
+               dlschTransportBlk);
+%% PDSCH Complex Symbols Generation
+pdschSymbols = ltePDSCH(enb, pdsch, codedTrBlock);
+%% PDSCH Mapping
+subframe(pdschIndices) = pdschSymbols;
+%% DCI Message Configuration
+dci.DCIFormat = 'Format1A';  % DCI message format
+dci.Allocation.RIV = 26;     % Resource indication value
+
+[dciMessage, dciMessageBits] = lteDCI(enb, dci); % DCI message
+%% DCI Channel Coding
+pdcch.NDLRB = enb.NDLRB;  % Number of DL-RB in total BW
+pdcch.RNTI = pdsch.RNTI;  % 16-bit value number
+pdcch.PDCCHFormat = 0;    % 1-CCE of aggregation level 1
+
+% Performing DCI message bits coding to form coded DCI bits
+codedDciBits = lteDCIEncode(pdcch, dciMessageBits);
+%% PDCCH Bits Generation
+pdcchInfo = ltePDCCHInfo(enb);    % Get the total resources for PDCCH
+pdcchBits = -1*ones(pdcchInfo.MTot, 1); % Initialized with -1
+
+% Performing search space for UE-specific control channel candidates
+candidates = ltePDCCHSpace(enb, pdcch, {'bits','1based'});
+
+% Mapping PDCCH payload on available UE-specific candidate. In this example
+% the first available candidate is used to map the coded DCI bits.
+pdcchBits( candidates(1, 1) : candidates(1, 2) ) = codedDciBits;
+%% PDCCH Complex Symbol Generation
+pdcchSymbols = ltePDCCH(enb, pdcchBits);
+%% PDCCH Mapping Indices Generation and Resource Grid Mapping
+pdcchIndices = ltePDCCHIndices(enb, {'1based'});
+
+% The complex PDCCH symbols are easily mapped to each of the resource grids
+% for each antenna port
+subframe(pdcchIndices) = pdcchSymbols;
+%% CFI Channel Coding
+cfiBits = lteCFI(enb);
+%% PCFICH Complex Symbol Generation
+pcfichSymbols = ltePCFICH(enb, cfiBits);
+%% PCFICH Indices Generation and Resource Grid Mapping
+pcfichIndices = ltePCFICHIndices(enb);
+
+% Map PCFICH symbols to resource grid
+subframe(pcfichIndices) = pcfichSymbols;
+%% plot Grid
+% figure(1)
+% surf(abs(subframe(:,:,1)));
+% view(2);
+% axis tight;
+% xlabel('OFDM Symbol');
+% ylabel('Subcarrier');
+% title('Resource grid');
+%% OFDM Modulation
+[timeDomainMapped, timeDomainInfo] = lteOFDMModulate(enb, subframe);
+%%AWGN
+AWGN=(sqrt(No/2))*(randn(size(timeDomainMapped))+1i*randn(size(timeDomainMapped)));
+sig_with_noise=timeDomainMapped+AWGN;
+% sig_with_noise=awgn(timeDomainMapped,Ebno,'measured');
+%% OFDM Demodulation
+Demodulated_signal = lteOFDMDemodulate(enb,sig_with_noise);
+% Demap PCFICH symbols from resource grid
+R_pcfichSymbols = Demodulated_signal(pcfichIndices) ;
+R_pcfichBits = ltePCFICHDecode(enb,R_pcfichSymbols);
+    
+% CFI Channel Decoding
+Rx_CFI = lteCFIDecode(R_pcfichBits);
+ber = ber+sum(Rx_CFI~=enb.CFI)/length(Rx_CFI);
+
+% Demap PDCCH symbols from resource grid
+
+R_pdcchSymbols = Demodulated_signal(pdcchIndices) ;
+R_pdcchBits = ltePDCCHDecode(enb, R_pdcchSymbols) ;
+
+% DCI Channel Decoding
+DciBits = R_pdcchBits( candidates(1, 1) : candidates(1, 2) );
+dcilen = length(dciMessageBits);
+decoded_DciBits = lteDCIDecode(dcilen, DciBits);
+ber = ber+sum(decoded_DciBits~=dciMessageBits)/length(decoded_DciBits);
+
+% Demap PDSCH symbols from resource grid
+R_pdschSymbols = Demodulated_signal(pdschIndices);
+[R_pdschBits,rx_pdsch_syymbols] = ltePDSCHDecode(enb, pdsch, R_pdschSymbols);
+R_pdschBits=cell2mat(R_pdschBits);
+R_pdschBits(R_pdschBits == 0) = -1;
+%  TrBlkSize = pdschInfo.Gd;
+    decodedTrBlock = lteDLSCHDecode(enb, pdsch, transportBlkSize, R_pdschBits);
+    ber = ber+sum(decodedTrBlock~=dlschTransportBlk)/length(decodedTrBlock);
+% 
+%     
+     end
+    %% Bit Error Rate
+    BER=[BER ber]
+%     
+end
+BER=BER./length(N_ITERATION);
+hold on
+legend('BER OF BUILT-IN MATLAB with 152 transport size')
+semilogy(EbNo_range,BER)

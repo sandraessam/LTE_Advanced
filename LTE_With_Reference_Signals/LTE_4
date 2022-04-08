@@ -1,0 +1,144 @@
+%% Sandra Essam
+%Actual patameters
+clc
+clear all
+EbNo_range=100;
+N_OFDMsymbols=138;
+ModulationOrder=64;
+N_subcarriers=512;
+N_Datasubcarriers=300;
+SamplingRate=7.68e6;
+CP_length=4.7e-6;
+u=[25;29;34]; %Root sequence
+BER=[];
+%Generate PSS
+n1=[0:30];
+d11=(exp((-1i.*pi.*n1.*(n1+1).*u(1))/63)).';
+d21=(exp((-1i.*pi.*n1.*(n1+1).*u(2))/63)).';
+d31=(exp((-1i.*pi.*n1.*(n1+1).*u(3))/63)).';
+n2=[31:61];
+d12=(exp((-1i.*pi.*(n2+1).*(n2+2).*u(1))/63)).';
+d22=(exp((-1i.*pi.*(n2+1).*(n2+2).*u(2))/63)).';
+d32=(exp((-1i.*pi.*(n2+1).*(n2+2).*u(3))/63)).';
+d1=[d11;d12];
+d2=[d21;d22];
+d3=[d31;d32];
+Zero_size=(N_subcarriers-length(d1))/2;
+D1=[zeros(Zero_size,1);d1;zeros(Zero_size,1)];
+D2=[zeros(Zero_size,1);d2;zeros(Zero_size,1)];
+D3=[zeros(Zero_size,1);d3;zeros(Zero_size,1)];
+N_Bits=N_Datasubcarriers*log2(ModulationOrder)*N_OFDMsymbols;
+Ebno=100;
+Eb=((ModulationOrder-1)*4)/(6*log2(ModulationOrder)*N_subcarriers);
+No=Eb/db2pow(Ebno);
+%%Generate Bits
+Bits=randi([0 1],N_Bits,1);
+%%Generate Symbols
+Symbols=qammod(Bits,ModulationOrder,'InputType','bit','UnitAveragePower',true);
+%%Serial TO parralel
+ParralelSymbol=reshape(Symbols,N_Datasubcarriers,N_OFDMsymbols);
+%%Guard
+GuardSide=zeros((N_subcarriers-N_Datasubcarriers)/2,N_OFDMsymbols);
+SIG=[GuardSide;ParralelSymbol;GuardSide];
+SIG=[SIG(:,1:6),D2,SIG(:,7:75),D2,SIG(:,75:end)];
+%%IFFT
+sig=ifft(SIG);
+%%CyclicPrefix
+CP_samples=round(SamplingRate*CP_length);
+sig_with_cp=[sig(N_subcarriers-CP_samples+1:N_subcarriers,:);sig];
+%%serialization
+sig_with_cp=reshape(sig_with_cp,1,size(sig_with_cp,1)*size(sig_with_cp,2));
+%%AWGN
+AWGN=(sqrt(No/2))*(randn(size(sig_with_cp))+1i*randn(size(sig_with_cp)));
+sig_with_noise=sig_with_cp+AWGN;
+%% RECIEVER
+%%MatchedFilter%% Actual patameters
+clear all
+clc
+EbNo_range=0:3:30;
+N_OFDMsymbols=7;
+N_ITERATION=1:1e4;
+ModulationOrder=64;
+N_subcarriers=512;
+N_Datasubcarriers=300;
+SamplingRate=7.68e6;
+Max_DelaySpread=1e-6;
+CP_length=4.7e-6;
+BER=[];
+N_Bits=N_Datasubcarriers*log2(ModulationOrder)*N_OFDMsymbols;
+No_Paths=round(SamplingRate*Max_DelaySpread);
+ERROR=0;
+% Ebno=100;
+for Ebno=EbNo_range
+ERROR=0;    
+for n=N_ITERATION
+Eb=((ModulationOrder-1)*4)/(6*log2(ModulationOrder)*N_subcarriers);
+No=Eb/db2pow(Ebno);
+%% Transmitter
+%%Generate Bits
+Bits=randi([0 1],N_Bits,1);
+%%Generate Symbols
+Symbols=qammod(Bits,ModulationOrder,'InputType','bit');
+%%Serial TO parralel
+ParralelSymbol=reshape(Symbols,N_Datasubcarriers,N_OFDMsymbols);
+%%Collect Referrence Signal
+Ref=ParralelSymbol(3:6:end,1);
+%%Guard
+GuardSide=zeros((N_subcarriers-N_Datasubcarriers)/2,N_OFDMsymbols);
+SIG=[GuardSide;ParralelSymbol;GuardSide];
+%%IFFT
+sig=ifft(SIG);
+%%CyclicPrefix
+CP_samples=round(SamplingRate*CP_length);
+sig_with_cp=[sig(N_subcarriers-CP_samples+1:N_subcarriers,:);sig];
+%%serialization
+sig_with_cp=reshape(sig_with_cp,1,size(sig_with_cp,1)*size(sig_with_cp,2));
+%% Channel
+h=sqrt(1/(2*No_Paths))*(randn(1,No_Paths)+1i.*randn(1,No_Paths));
+sig_with_channel=[conv(sig_with_cp,h)];
+%%AWGN
+AWGN=(sqrt(No/2))*(randn(size(sig_with_channel))+1i*randn(size(sig_with_channel)));
+sig_with_noise=sig_with_channel+AWGN;
+%% RECIEVER
+signal=sig_with_noise(1:length(sig_with_cp));
+Recieved_sig=reshape(signal,N_subcarriers+CP_samples,N_OFDMsymbols);
+%%Remove CP
+Recieved_sig(1:CP_samples,:)=[];
+%%FFT
+Recieved_SIG=fft(Recieved_sig);
+%%Remove Guards
+Recieved=Recieved_SIG(((N_subcarriers-N_Datasubcarriers)/2)+1:N_subcarriers-((N_subcarriers-N_Datasubcarriers)/2),:);
+%%Extract Reference
+REC_ref=Recieved(3:6:end,1);
+%%Channel Estimation using LS
+H=REC_ref./Ref;
+%%Interpolation
+Rec_interp=interp1([3:6:N_Datasubcarriers],H,[1:300],'linear','extrap').';
+%%Equalization
+Estimated_SIG=Recieved./(repmat(Rec_interp,1,N_OFDMsymbols));
+%%parrallel to series
+Recieved_series=reshape(Estimated_SIG,N_Datasubcarriers*N_OFDMsymbols,1);
+%%Demodulation
+Recovered_Bits=qamdemod(Recieved_series,ModulationOrder,'Output','bit');
+%%DeMapper
+ERROR=ERROR+(sum(Bits~=Recovered_Bits)./(N_Bits));
+ end
+ber=ERROR./(length(N_ITERATION));
+BER=[BER ber]
+end
+hold on
+semilogy(EbNo_range,BER,'-^')
+Y1=fliplr(conj(ifft(D1)));
+Y2=fliplr(conj(ifft(D2)));
+Y3=fliplr(conj(ifft(D3)));
+y1=conv(Y1,sig_with_noise);
+y2=conv(Y2,sig_with_noise);
+y3=conv(Y3,sig_with_noise);
+subplot(3,1,1)
+plot(abs(y1));
+subplot(3,1,2)
+plot(abs(y2));
+subplot(3,1,3)
+plot(abs(y3));
+
+

@@ -1,0 +1,56 @@
+%% Sandra Essam
+%Actual patameters
+clc
+EbNo_range=0:20;
+N_OFDMsymbols=1e4;
+ModulationOrder=64;
+N_subcarriers=512;
+N_Datasubcarriers=300;
+SamplingRate=7.68e6;
+CP_length=4.7e-6;
+BER=[];
+N_Bits=N_Datasubcarriers*log2(ModulationOrder)*N_OFDMsymbols;
+% Ebno=100;
+for Ebno=EbNo_range
+Eb=((ModulationOrder-1)*4)/(6*log2(ModulationOrder)*N_subcarriers);
+No=Eb/db2pow(Ebno);
+%%Generate Bits
+Bits=randi([0 1],N_Bits,1);
+%%Generate Symbols
+Symbols=qammod(Bits,ModulationOrder,'InputType','bit');
+%%Serial TO parralel
+ParralelSymbol=reshape(Symbols,N_Datasubcarriers,N_OFDMsymbols);
+%%Guard
+GuardSide=zeros((N_subcarriers-N_Datasubcarriers)/2,N_OFDMsymbols);
+SIG=[GuardSide;ParralelSymbol;GuardSide];
+%%IFFT
+sig=ifft(SIG);
+%%CyclicPrefix
+CP_samples=round(SamplingRate*CP_length);
+sig_with_cp=[sig(N_subcarriers-CP_samples+1:N_subcarriers,:);sig];
+%%serialization
+sig_with_cp=reshape(sig_with_cp,1,size(sig_with_cp,1)*size(sig_with_cp,2));
+%%AWGN
+AWGN=(sqrt(No/2))*(randn(size(sig_with_cp))+1i*randn(size(sig_with_cp)));
+sig_with_noise=sig_with_cp+AWGN;
+%% RECIEVER
+Recieved_sig=reshape(sig_with_noise,N_subcarriers+CP_samples,N_OFDMsymbols);
+%%Remove CP
+Recieved_sig(1:CP_samples,:)=[];
+%%FFT
+Recieved_SIG=fft(Recieved_sig);
+%%Remove Guards
+Recieved=Recieved_SIG(((N_subcarriers-N_Datasubcarriers)/2)+1:N_subcarriers-((N_subcarriers-N_Datasubcarriers)/2),:);
+%%parrallel to series
+Recieved_series=reshape(Recieved,N_Datasubcarriers*N_OFDMsymbols,1);
+%%Demodulation
+Recovered_Bits=qamdemod(Recieved_series,ModulationOrder,'OutputType','bit');
+%%DeMapper
+Error=sum(Bits~=Recovered_Bits);
+ber=Error/N_Bits;
+BER=[BER ber]
+end
+hold on
+semilogy(EbNo_range,BER)
+legend('BER of OFDM with 300 datasubcarrier ');
+hold on
